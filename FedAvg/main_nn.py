@@ -235,6 +235,7 @@ if __name__ == '__main__':
     save_folder='../save/'
     stat_save_folder='../stats/'
 
+    print('distances: ', distances)
     # writing distance outputs to a json file
     print(distances,  file=open('./distances.json', 'w'))
 

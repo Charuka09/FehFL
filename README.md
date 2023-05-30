@@ -5,7 +5,7 @@
 
 This is a PyTorch implementation of our [paper](https://arxiv.org/abs/2303.11337).  * This repository used code from [federated learning](https://github.com/shaoxiongji/federated-learning).
 
-## Citing Attack-Resistant Federated Learning
+## Citing Recursive Euclidean Distance Based Robust Aggregation Technique For Federated Learnin
 ```
 @article{fu2019attackresistant,
     title={Recursive Euclidean Distance Based Robust Aggregation Technique For Federated Learning},
