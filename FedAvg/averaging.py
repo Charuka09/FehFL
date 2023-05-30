@@ -21,7 +21,7 @@ eps = np.finfo(float).eps
 def aggregate_weights(args, w_locals, net_glob, reweights, fg):
     # update global weights
     # choices are ['euclidean_distance', 'average', 'median', 
-    #              'trimmed_mean', 'repeated', 'irls',
+    #              'trimmed_mean', 'repeated', 'irls', 'krum', 
     #              'simple_irls', 'irls_median', 'irls_theilsen',
     #              'irls_gaussian', 'fg']
     agg_time = 0
@@ -126,7 +126,7 @@ def convert_tensor_to_np_arr(tensor):
 
     return model_vector
 
-def special(w, global_model):
+def euclidean_distance_average(w, global_model):
     dist_list = []
     w_local_total = []
     w_avg = copy.deepcopy(w[0])
@@ -136,42 +136,38 @@ def special(w, global_model):
     device = w[0][list(w[0].keys())[0]].device
     total_dist = 0
 
-    for k in w_avg.keys():
-        shape = w_avg[k].shape
-        print(k, shape)
-        
-        num_shape = reduce(lambda x, y: x * y, shape)
-        total_num += num_shape
+    ## Code snippet is to pritn the layers and their shapes 
+    # for k in w_avg.keys():
+    #     shape = w_avg[k].shape        
+    #     num_shape = reduce(lambda x, y: x * y, shape)
+    #     print(k, shape, num_shape)
+
+    #     total_num += num_shape
 
     y_list_g = global_model.to(device)
     w_global = y_list_g.state_dict()
     result_dict = OrderedDict()
 
     w_glob_data_arr = convert_tensor_to_np_arr(w_global)
-    print(w_glob_data_arr, len(w_glob_data_arr))
 
     for i in range(len(w)):
         w_local_data_arr = convert_tensor_to_np_arr(w[i])
         dist = np.linalg.norm(w_glob_data_arr - w_local_data_arr)
         # print('dist..........', dist)
         dist_list.append(dist)
-        for key in w[i]:
-            w[i][key] *= 1/dist
         total_dist += (1/dist)
-        for key in w_avg:
-            result_dict[key] = w_avg[key] + w[i][key]
-        # print(w_avg)
-    # print(w_avg)
-    for key in w_avg:
-        result_dict[key] = w_avg[key] - w_avg_copy[key]
-    values_list = list(w_avg.values())
-
-    w_avg = torch.div(w_avg, total_dist)
+        for k in w_avg.keys():
+            y = w[i][k] / dist
+            w_avg[k] += y
+    
+    for k in w_avg.keys():
+        w_avg[k] -= w_avg_copy[k]
+        w_avg[k] = torch.div(w_avg[k], total_dist)
     agg_time = time.time() - cur_time
     return w_avg, agg_time, dist_list
 
 
-def euclidean_distance_average(w, global_model):
+def special(w, global_model):
   dist_list = []
   w_local_total = []
   w, invalid_model_idx = get_valid_models(w)
