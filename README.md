@@ -39,3 +39,8 @@ Label Flipping attack on MNIST
 python main_nn.py --model smallcnn --epochs 200 --gpu 0 --iid 1 --fix_total --frac 0.1 --num_attackers 4 --attacker_ep 10 --num_users 100 --attack_label 1 --agg euclidean_distance
 ```
 Change `--agg` tag to select aggregation algorithm and change `--num_attackers` to specify the number of attackers.
+
+### Run based on Dynamic data distribution setting
+```
+python main_nn.py --model smallcnn --epochs 100 --gpu 0 --iid 0 --is_dynamic 1  --fix_total --frac 0.1 --num_attackers 0  --attacker_ep 0 --num_users 100 --attack_label 1 --agg average
+```
