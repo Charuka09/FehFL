@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import os
 import copy
 import numpy as np
+from collections import deque
 from tqdm import tqdm
 import torch
 from datasets import build_datasets
@@ -19,6 +20,7 @@ from FedNets import build_model
 from averaging import aggregate_weights, get_valid_models, FoolsGold, IRLS_aggregation_split_restricted
 from attack import add_gaussian_noise, change_weight
 import json
+import sys
 
 
 def test(net_g, dataset, args, dict_users):
@@ -123,7 +125,8 @@ if __name__ == '__main__':
     reweights = []
     backdoor_accs = []
     total_agg_time = 0
-    distances = []
+    distances_actual = []
+    distances_malicious = []
     if 'irls' in args.agg:
         model_save_path = '../weights/{}_{}_irls_{}_{}_{}'.format(args.dataset, args.model, args.Lambda, args.thresh, args.iid)
     else:
@@ -132,7 +135,18 @@ if __name__ == '__main__':
         os.makedirs(model_save_path)
     last_bd_acc=0
     lr_change_ratio=10.0
+    idx_queue = deque()
+    label_idxs = np.arange(60000)
+    entrpopies = []
+    labels = None
+    if args.is_dynamic:
+        labels = dataset_train.train_labels.numpy()
+        print('len(labels)', len(labels))
+        for i in range(50000,60000):
+            idx_queue.append(i)
+        print('idx_queue[0]',idx_queue[0], len(idx_queue))
     for iter in tqdm(range(args.epochs)):
+        iter_entropies = []
         print('Epoch:', iter, "/", args.epochs)
         net_glob.train()
         w_locals, loss_locals = [], []
@@ -144,7 +158,25 @@ if __name__ == '__main__':
             idxs_users = np.random.choice(range(args.num_users), m, replace=False)
 
         for idx in idxs_users:
-            # print(idx)
+            if args.is_dynamic:
+                # Update each user with new data from the data queue
+                idx_update = [idx_queue.popleft() for _ in range(10)]
+                idx_update = np.array(idx_update)
+                if isinstance(dict_users[idx], set):
+                    dict_users[idx] = np.array(list(dict_users[idx]))
+                # print(dict_users[idx].shape)
+                # print(idx_update.shape)
+                dict_users[idx] = np.concatenate((dict_users[idx], idx_update), axis=0)
+                user_labels = [labels[np.where(label_idxs == item)][0] for item in dict_users[idx]]
+                bin_count = np.bincount(user_labels)
+                mask = bin_count == 0
+                random_values = np.random.randint(1, 2, size=(bin_count.shape))
+                bin_count[mask] = random_values[mask]
+                num_labels = np.sum(np.arange(len(bin_count)) * bin_count)
+                probabilities = bin_count / num_labels
+                entropy = -np.sum(probabilities * np.log2(probabilities))
+                iter_entropies.append({idx: entropy})
+                # print(idx)
             # Train the new without any attackers
             if (idx >= args.num_users - args.num_attackers and not args.fix_total) or \
                     (args.fix_total and idx in attackers):
@@ -197,14 +229,15 @@ if __name__ == '__main__':
 
         # remove model with inf values
         w_locals, invalid_model_idx= get_valid_models(w_locals)
-
+        entrpopies.append(iter_entropies)
         if len(w_locals) == 0:
             continue
 
-        w_glob, agg_time, dist_list = aggregate_weights(args, w_locals, net_glob, reweights, fg)
+        w_glob, agg_time, dist_list_actual, dist_list_malicious = aggregate_weights(args, w_locals, net_glob, reweights, fg)
         total_agg_time += agg_time
         print('Aggregation time - ', agg_time)
-        distances += dist_list
+        distances_actual += dist_list_actual
+        distances_malicious += dist_list_malicious
         # copy weight to net_glob
         if not args.agg == 'fg':
             net_glob.load_state_dict(w_glob)
@@ -232,12 +265,15 @@ if __name__ == '__main__':
             print('\nTrain loss:', loss_avg)
         loss_train.append(loss_avg)
 
+    print(entrpopies,  file=open('./entropies.txt', 'w'))
     save_folder='../save/'
-    stat_save_folder='../stats/'
+    results='./results/'
 
-    print('distances: ', distances)
+    print('distances_actual: ', distances_actual)
+    print('distances_malicious: ', distances_malicious)
+
     # writing distance outputs to a json file
-    print(distances,  file=open('./distances.json', 'w'))
+    # print(distances,  file=open('./distances.json', 'w'))
 
     ######################################################
     # Testing                                            #
@@ -296,7 +332,6 @@ if __name__ == '__main__':
                                                                                            args.num_attackers,
                                                                                            args.attacker_ep,
                                                                                            args.thresh,args.iid))
-    print(avg_acc,  file=open('./accuracy.txt', 'w'))
     print('avg_acc--', avg_acc)
     print('Average agg time: ', total_agg_time/args.epochs, total_agg_time)
     # plot acc by class
@@ -330,10 +365,12 @@ if __name__ == '__main__':
     plt.ylabel('train_loss')
     plt.xlabel('epoch')
     plt.savefig(save_folder+'fed_{}_{}_{}_{}_C{}_iid{}.png'.format(args.agg,args.dataset, args.model, args.epochs, args.frac, args.iid))
-    print(loss_train,  file=open('./loss.txt', 'w'))
 
+    # Saving results into files
+    print(loss_train,  file=open('./results/fedAvg/loss.txt', 'w'))
+    print(att_acc_list,  file=open('./results/fedAvg/asr.txt', 'w'))
+    print(avg_acc,  file=open('./results/fedAvg/accuracy.txt', 'w'))
     # print('loss_train--', loss_train)
-    print(att_acc_list)
 
     if args.is_backdoor:
         # plot backdoor acc

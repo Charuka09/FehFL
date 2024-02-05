@@ -2,6 +2,7 @@ import numpy as np
 from torchvision import datasets, transforms
 import random
 import copy
+import sys
 
 from loan.LoanHelper import LoanHelper, LoanDataset
 
@@ -22,11 +23,11 @@ def build_datasets(args):
                                       ]))
         if args.is_backdoor:
             if args.iid:
-                dict_users = iid(dataset_train, args.num_users + args.num_attackers)
+                dict_users = iid(dataset_train, args.num_users + args.num_attackers, args.is_dynamic)
             else:  # dirichlet sample users
                 dict_users = sample_dirichlet_train_data(dataset_train, args.num_users, args.num_attackers)
         elif args.iid:
-            dict_users = iid(dataset_train, args.num_users)
+            dict_users = iid(dataset_train, args.num_users, args.is_dynamic)
             user_list = [x for x in range(args.num_users)]
             attackers = np.random.choice(user_list, args.num_attackers, replace=False)
             print('attackers {} are selected from {}'.format(attackers, user_list))
@@ -37,7 +38,7 @@ def build_datasets(args):
             elif args.fix_total:
                 assert args.iid == False
                 # valid seed 3 4 9 13 1237
-                dict_users, user_has_one, user_has_zero = mnist_noniid_fixed_total(dataset_train, args.num_users)
+                dict_users, user_has_one, user_has_zero = mnist_noniid(dataset_train, args.num_users, args.is_dynamic)
                 np.random.seed(args.seed)
                 if args.attack_label < 0 and args.donth_attack:
                     attackers = np.random.choice(user_has_zero, args.num_attackers, replace=False)
@@ -63,7 +64,7 @@ def build_datasets(args):
         dataset_train = datasets.CIFAR10('../data/cifar', train=True, transform=transform_train, download=True)
         dataset_test = datasets.CIFAR10('../data/cifar', train=False, transform=transform_test, download=True)
         if args.iid:
-            dict_users = iid(dataset_train, args.num_users + args.num_attackers)
+            dict_users = iid(dataset_train, args.num_users + args.num_attackers, args.is_dynamic)
         else:  # dirichlet sample users
             dict_users = sample_dirichlet_train_data(dataset_train, args.num_users, args.num_attackers)
     elif args.dataset == 'loan':
@@ -73,7 +74,7 @@ def build_datasets(args):
         dataset_train = loanHelper.dataset_train
         dataset_test = loanHelper.dataset_test
         if args.iid:
-            dict_users = iid(dataset_train, args.num_users + args.num_attackers)
+            dict_users = iid(dataset_train, args.num_users + args.num_attackers, args.is_dynamic)
         else:  # non-iid sample by states
             dict_users = loan_sample_by_state(loanHelper, args.num_users + args.num_attackers)
     else:
@@ -86,7 +87,7 @@ def build_datasets(args):
     return dataset_train, dataset_test, dict_users, test_users, attackers
 
 
-def iid(dataset, num_users):
+def iid(dataset, num_users, is_dynamic):
     """
     Sample I.I.D. client data from CIFAR10 dataset
     :param dataset:
@@ -94,11 +95,26 @@ def iid(dataset, num_users):
     :return: dict of image index
     """
     num_items = int(len(dataset)/num_users)
-    dict_users, all_idxs = {}, [i for i in range(len(dataset))]
+    dict_users = {i: np.array([]) for i in range(num_users)}
+    all_idxs = {}, [i for i in range(len(dataset))]
+    if is_dynamic:
+        num_items = int((len(dataset)-10000)/num_users)
+        all_idxs = [i for i in range(len(dataset)-10000)]
+    idxs = np.arange(len(dataset)-10000)
+    labels = dataset.targets.numpy()[:50000]
+    entropy_list = []
+    print('iid data setting')
     for i in range(num_users):
         dict_users[i] = set(np.random.choice(all_idxs, num_items, replace=False))
         all_idxs = list(set(all_idxs) - dict_users[i])
         print('assigned {} data to user {}'.format(len(dict_users[i]), i))
+        if is_dynamic:
+            user_labels = [labels[np.where(idxs == item)][0] for item in dict_users[i]]
+            bin_count = np.bincount(user_labels)
+            probabilities = bin_count / len(user_labels)
+            entropy = -np.sum(probabilities * np.log2(probabilities))
+            entropy_list.append(entropy)
+    # print(entropy_list)
     return dict_users
 
 
@@ -111,16 +127,16 @@ def mnist_noniid_with_sybil(dataset, num_users, num_attackers):
     :return:
     """
     dict_users = {i: np.array([]) for i in range(num_users + num_attackers)}
-    labels = dataset.train_labels.numpy()
+    labels = dataset.targets.numpy()
     idxs = np.arange(len(labels))
     u = np.unique(labels)
-
+    print('single data setting')
     idxs_labels = np.vstack((idxs, labels))
     for i in range(num_users):
         idx = i % 10
         idx_labels = [idxs_labels[0][l] for l in range(len(labels)) if idxs_labels[1][l] == idx]
         assert len(idxs_labels) > 0
-        print('assigned label {} \"{}\" to user {}'.format(len(idx_labels), i, i))
+        print('assigned label {} \"{}\" to user {}'.format(len(idx_labels), idx, i))
         dict_users[i] = np.concatenate((dict_users[i], idx_labels), axis=0)
     for j in range(num_users, num_users + num_attackers):
         idx_labels = [idxs_labels[0][l] for l in range(len(labels)) if idxs_labels[1][l] == 1]
@@ -128,8 +144,57 @@ def mnist_noniid_with_sybil(dataset, num_users, num_attackers):
         print('assigned label {} \"{}\" to attacker {}'.format(len(idx_labels), 1, j))
     return dict_users
 
+def mnist_noniid(dataset, num_users, is_dynamic):
+    """
+    Sample non-I.I.D client data from MNIST dataset
+    :param dataset:
+    :param num_users:
+    :return:
+    """
+    user_has_one = []
+    user_has_zero = []
+    entropy_list = []
+    num_shards, num_imgs = 200, 300
+    idx_shard = [i for i in range(num_shards)]
+    dict_users = {i: np.array([], dtype='int64') for i in range(num_users)}
+    idxs = np.arange(num_shards*num_imgs)
+    labels = dataset.targets.numpy()
+    if is_dynamic:
+        num_imgs = int(50000 / num_shards)
+        labels = dataset.targets.numpy()[:50000]
+        idxs = np.arange(num_shards*num_imgs)
 
-def mnist_noniid_fixed_total(dataset, num_users):
+    # sort labels
+    idxs_labels = np.vstack((idxs, labels))
+    idxs_labels = idxs_labels[:,idxs_labels[1,:].argsort()]
+    idxs = idxs_labels[0,:]
+
+    # divide and assign
+    for i in range(num_users):
+        rand_set = set(np.random.choice(idx_shard, 2, replace=False))
+        idx_shard = list(set(idx_shard) - rand_set)
+        for rand in rand_set:
+            dict_users[i] = np.concatenate((dict_users[i], idxs[rand*num_imgs:(rand+1)*num_imgs]), axis=0)
+        if is_dynamic:
+            user_labels = [labels[np.where(idxs == item)][0] for item in dict_users[i]]
+            bin_count = np.bincount(user_labels)
+            print('bin_count', bin_count)
+            mask = bin_count == 0
+            print('bin_count', bin_count)
+            random_values = np.random.randint(1, 2, size=(bin_count.shape))
+            print('bin_count', bin_count)
+            bin_count[mask] = random_values[mask]
+            print('bin_count', bin_count)
+            probabilities = bin_count / len(user_labels)
+            print('probabilities', probabilities, len(user_labels))
+            entropy = -np.sum(probabilities * np.log2(probabilities))
+            print('entropy', entropy)
+            entropy_list.append(entropy)
+    print('entropy_list', entropy_list)
+    return dict_users, user_has_one, user_has_zero
+
+
+def mnist_noniid_fixed_total(dataset, num_users, is_dynamic):
     """
     Sample non-I.I.D client data from MNIST dataset
     :param dataset:
@@ -139,17 +204,23 @@ def mnist_noniid_fixed_total(dataset, num_users):
     assert num_users == 100, 'currently only support 100 users'
     num_shards = 2 * num_users
     num_imgs = int(60000 / num_shards)
+    labels = dataset.targets.numpy()
+    if is_dynamic:
+        num_imgs = int(50000 / num_shards)
+        labels = dataset.targets.numpy()[:50000]
     assert num_shards % 10 == 0
+    # num2ids - getting dictonary of size 10 and each key has 20 unique values between 0-199
     num2ids = {i: np.array(range(int(num_shards / 10))) + int(num_shards / 10) * i for i in range(10)}
+    # dict_users - creating user dict
     dict_users = {i: np.array([]) for i in range(num_users)}
+    # idxs - array for all image ids - 60000
     idxs = np.arange(num_shards*num_imgs)
-    labels = dataset.train_labels.numpy()
-
     # sort labels
+    print('len(labels)', len(labels), num_imgs)
     idxs_labels = np.vstack((idxs, labels))
     idxs_labels = idxs_labels[:,idxs_labels[1,:].argsort()]
     idxs = idxs_labels[0,:]                     # (0 | 1 | 2 | ... | 9)
-
+    entropy_list = []
     # divide and assign
     user_has_one = []
     user_has_zero = []
@@ -160,6 +231,7 @@ def mnist_noniid_fixed_total(dataset, num_users):
         # if len(list(num2ids.keys())) < 2:
         #     replace = True
         rand_cls = np.random.choice(list(num2ids.keys()), 2, replace=replace)
+        # print('num2ids.keys()', num2ids.keys(), rand_cls)
         if 1 in rand_cls:
             user_has_one.append(i)
         if 0 in rand_cls:
@@ -176,6 +248,15 @@ def mnist_noniid_fixed_total(dataset, num_users):
 
         for rand in rand_set:
             dict_users[i] = np.concatenate((dict_users[i], idxs[rand*num_imgs:(rand+1)*num_imgs]), axis=0)
+        # retuns dict_user, each user has 600 values(idxs for each label (1-60000))
+        if is_dynamic:
+            user_labels = [labels[np.where(idxs == item)][0] for item in dict_users[i]]
+            bin_count = np.bincount(user_labels)
+            # print('bin_count :', bin_count)
+            probabilities = bin_count / len(user_labels)
+            entropy = -np.sum(probabilities * np.log2(probabilities))
+            entropy_list.append(entropy)
+    # print(entropy_list)
     return dict_users, user_has_one, user_has_zero
 
 
@@ -187,7 +268,7 @@ def mnist_refined_with_sybil(dataset, num_users, num_attackers):
     :return:
     """
     dict_users = {i: np.array([]) for i in range(num_users + num_attackers)}
-    labels = np.array(dataset.train_labels)
+    labels = np.array(dataset.targets)
     idxs = np.arange(len(labels))
 
     idxs_labels = np.vstack((idxs, labels))
@@ -288,4 +369,4 @@ if __name__ == '__main__':
     num = 100
     # valid seed 3 4 9 13 1237 ...
     np.random.seed(1237)
-    d = mnist_noniid_fixed_total(dataset_train, num)
+    d = mnist_noniid_fixed_total(dataset_train, num, False)

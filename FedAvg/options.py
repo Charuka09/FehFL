@@ -64,6 +64,9 @@ def args_parser():
     parser.add_argument('--alpha', type=float, default=0.2, help='set thresh of trimmed mean (default: 0.2)')
     parser.add_argument('--use_memory', type=str2bool, default=True, help="use FoolsGold memory option")
 
+    #Dynamic FL arguments
+    parser.add_argument('--is_dynamic', type=int, default=0, help="use Dynamic Data Distribution")
+    
     # other arguments
     parser.add_argument('--dataset', type=str, default='mnist', help="name of dataset")
     parser.add_argument('--iid', type=int, default=0, help='whether i.i.d or not, 1 for iid, 0 for non-iid')

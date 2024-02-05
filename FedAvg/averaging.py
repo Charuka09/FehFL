@@ -25,10 +25,11 @@ def aggregate_weights(args, w_locals, net_glob, reweights, fg):
     #              'simple_irls', 'irls_median', 'irls_theilsen',
     #              'irls_gaussian', 'fg']
     agg_time = 0
-    distList = []
+    distListActual = []
+    distListMalicious = []
     if args.agg == 'euclidean_distance':
         print("using euclidean distance average Estimator")
-        w_glob, agg_time, distList = euclidean_distance_average(w_locals, net_glob)
+        w_glob, agg_time, distListActual, distListMalicious  = euclidean_distance_average(w_locals, net_glob)
     elif args.agg == 'median':
         print("using simple median Estimator")
         w_glob = simple_median(w_locals)
@@ -83,7 +84,7 @@ def aggregate_weights(args, w_locals, net_glob, reweights, fg):
         w_glob, agg_time = average_weights(w_locals)
     else:
         exit('Error: unrecognized aggregation method')
-    return w_glob, agg_time, distList
+    return w_glob, agg_time, distListActual, distListMalicious
 
 
 def average_weights(w):
@@ -127,7 +128,8 @@ def convert_tensor_to_np_arr(tensor):
     return model_vector
 
 def euclidean_distance_average(w, global_model):
-    dist_list = []
+    dist_list_actual = []
+    dist_list_malicious = []
     w_local_total = []
     w_avg = copy.deepcopy(w[0])
     w_avg_copy = copy.deepcopy(w[0])
@@ -154,7 +156,10 @@ def euclidean_distance_average(w, global_model):
         w_local_data_arr = convert_tensor_to_np_arr(w[i])
         dist = np.linalg.norm(w_glob_data_arr - w_local_data_arr)
         # print('dist..........', dist)
-        dist_list.append(dist)
+        if dist < 0:
+           dist_list_actual.append(dist)
+        else:
+            dist_list_malicious.append(dist)
         total_dist += (1/dist)
         for k in w_avg.keys():
             y = w[i][k] / dist
@@ -164,7 +169,7 @@ def euclidean_distance_average(w, global_model):
         w_avg[k] -= w_avg_copy[k]
         w_avg[k] = torch.div(w_avg[k], total_dist)
     agg_time = time.time() - cur_time
-    return w_avg, agg_time, dist_list
+    return w_avg, agg_time, dist_list_actual, dist_list_malicious
 
 
 def special(w, global_model):
