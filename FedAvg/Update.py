@@ -159,7 +159,7 @@ class LocalUpdate(object):
 
         # Add Gaussian noise to 50% of the parameters
         for name, param in net.items():
-            if torch.rand(1).item() < 0.3:  # Add noise to 50% of parameters
+            if torch.rand(1).item() < 0.5:  # Add noise to 50% of parameters
                 net[name] = add_gaussian_noise(param)
 
         return original_state_dict, net, loss, _updated_net

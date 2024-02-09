@@ -6,15 +6,15 @@
 This is a PyTorch implementation of our [paper](https://arxiv.org/abs/2303.11337).  * This repository used code from [federated learning](https://github.com/shaoxiongji/federated-learning) and [Attack-Resistant-Federated-Learning](https://github.com/fushuhao6/Attack-Resistant-Federated-Learning)
 
 ## Citing Recursive Euclidean Distance Based Robust Aggregation Technique For Federated Learnin
-```
-@article{cursiveEuclideanDistanc,
+``
+@article{recursiveEuclideanDistanc,
     title={Recursive Euclidean Distance Based Robust Aggregation Technique For Federated Learning},
     author={Charuka Herath, Yogachandran Rahulamathavan, Xiaolan Liu},
     journal={https://arxiv.org/abs/2303.11337},
     year={2023}
 }
 
-@article{cursiveEuclideanDistanc,
+@article{FheFL,
     title={FheFL: Fully Homomorphic Encryption Friendly Privacy-Preserving Federated Learning with Byzantine Users},
     author={Yogachandran Rahulamathavn, Charuka Herath, Xiaolan Liu, Sangarapillai Lambotharan, Carsten Maple},
     journal={https://arxiv.org/abs/2306.05112},
@@ -50,7 +50,7 @@ python main_nn.py --model smallcnn --epochs 100 --gpu 0 --iid 0 --is_dynamic 1  
 python main_nn.py --model smallcnn --epochs 100 --gpu 0 --iid 0 --fix_total --frac 0.1 --num_attackers 10 --attacker_ep 5 --num_users 100 --attack_label 1 --agg euclidean_distance --noise 1
 ```
 
-#### Backdoor poisoing attack
+#### Backdoor poisoning attack
 ```
-python main_nn.py --model smallcnn --epochs 100 --gpu 0 --iid 0 --fix_total --frac 0.1 --num_attackers 10 --attacker_ep 5 --num_users 100 --attack_label 1 --agg euclidean_distance --noise 1 is_backdoor True
+python main_nn.py --model smallcnn --epochs 100 --gpu 0 --iid 0 --fix_total --frac 0.1 --num_attackers 10 --attacker_ep 5 --num_users 100 --attack_label 1 --agg euclidean_distance --noise 1 --is_backdoor True
 ```
