@@ -153,13 +153,13 @@ class LocalUpdate(object):
         original_state_dict = net
 
         # Function to add Gaussian noise to tensor
-        def add_gaussian_noise(tensor, std_factor=0.1):
+        def add_gaussian_noise(tensor, std_factor=0.01):
             noise = torch.randn_like(tensor) * tensor.std() * std_factor
             return tensor + noise
 
         # Add Gaussian noise to 50% of the parameters
         for name, param in net.items():
-            if torch.rand(1).item() < 0.5:  # Add noise to 50% of parameters
+            if torch.rand(1).item() < 0.3:  # Add noise to 50% of parameters
                 net[name] = add_gaussian_noise(param)
 
         return original_state_dict, net, loss, _updated_net
