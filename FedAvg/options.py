@@ -76,5 +76,7 @@ def args_parser():
     parser.add_argument('--verbose', type=int, default=0, help='verbose print, 1 for True, 0 for False')
     parser.add_argument('--seed', type=int, default=1237, help='random seed (default: 1234)')
 
+    # Local model update based with the gussian noise
+    parser.add_argument('--noise', type=int, default=0, help="add gussian noise to the local model updates")
     args = parser.parse_args()
     return args

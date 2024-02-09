@@ -148,6 +148,22 @@ class LocalUpdate(object):
 
         return net.state_dict(), sum(epoch_loss) / len(epoch_loss), net
 
+    def update_weights_with_noise(self, net):
+        net, loss, _updated_net = self.update_weights(net)
+        original_state_dict = net
+
+        # Function to add Gaussian noise to tensor
+        def add_gaussian_noise(tensor, std_factor=0.1):
+            noise = torch.randn_like(tensor) * tensor.std() * std_factor
+            return tensor + noise
+
+        # Add Gaussian noise to 50% of the parameters
+        for name, param in net.items():
+            if torch.rand(1).item() < 0.5:  # Add noise to 50% of parameters
+                net[name] = add_gaussian_noise(param)
+
+        return original_state_dict, net, loss, _updated_net
+
     def update_gradients(self, net):
         net.train()
         # train and update

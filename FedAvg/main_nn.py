@@ -139,6 +139,8 @@ if __name__ == '__main__':
     label_idxs = np.arange(60000)
     entrpopies = []
     labels = None
+    #update for now ---
+    # net_glob.train()
     if args.is_dynamic:
         labels = dataset_train.train_labels.numpy()
         print('len(labels)', len(labels))
@@ -149,7 +151,7 @@ if __name__ == '__main__':
         iter_entropies = []
         print('Epoch:', iter, "/", args.epochs)
         net_glob.train()
-        w_locals, loss_locals = [], []
+        w_locals, w_locals_noise, loss_locals = [], [], []
         m = max(int(args.frac * args.num_users), 1)
         # print('taking {} users'.format(m))
         if args.frac == 1:
@@ -158,6 +160,7 @@ if __name__ == '__main__':
             idxs_users = np.random.choice(range(args.num_users), m, replace=False)
 
         for idx in idxs_users:
+            w_noise = None
             if args.is_dynamic:
                 # Update each user with new data from the data queue
                 idx_update = [idx_queue.popleft() for _ in range(10)]
@@ -206,6 +209,10 @@ if __name__ == '__main__':
                 temp_net = copy.deepcopy(net_glob)
                 if args.agg == 'fg':
                     w, loss, _poisoned_net = local.update_gradients(net=temp_net)
+                elif args.noise:
+                    w, w_noise, loss, _updated_net = local.update_weights_with_noise(net=temp_net)
+                    # print(w_locals_noise)
+                    print([w, w_noise],  file=open('./results_noise/results.txt', 'w'))
                 else:
                     w, loss, _poisoned_net = local.update_weights(net=temp_net)
 
@@ -221,23 +228,32 @@ if __name__ == '__main__':
                 temp_net = copy.deepcopy(net_glob)
                 if args.agg == 'fg':
                     w, loss, _updated_net = local.update_gradients(net=temp_net)
+                elif args.noise:
+                    w, w_noise, loss, _updated_net = local.update_weights_with_noise(net=temp_net)
+                    w_locals_noise, invalid_model_idx_noise= get_valid_models(w_locals)
+                    # print("invalid_model_idx_noise--------", invalid_model_idx_noise)
+                    print([w, w_noise],  file=open('./results_noise/results.txt', 'w'))
                 else:
                     w, loss, _updated_net = local.update_weights(net=temp_net)
-
+                                
+            w_locals_noise.append(copy.deepcopy(w_noise))
             w_locals.append(copy.deepcopy(w))
             loss_locals.append(copy.deepcopy(loss))
 
         # remove model with inf values
         w_locals, invalid_model_idx= get_valid_models(w_locals)
+        if invalid_model_idx:
+            print("invalid_model_idx--------", invalid_model_idx, len(w_locals))
         entrpopies.append(iter_entropies)
         if len(w_locals) == 0:
+            break
             continue
-
-        w_glob, agg_time, dist_list_actual, dist_list_malicious = aggregate_weights(args, w_locals, net_glob, reweights, fg)
+        w_glob, agg_time, dist_list_actual, dist_list_malicious = aggregate_weights(args, w_locals, w_locals_noise, net_glob, reweights, fg)
         total_agg_time += agg_time
         print('Aggregation time - ', agg_time)
         distances_actual += dist_list_actual
         distances_malicious += dist_list_malicious
+        net_glob.load_state_dict(w_glob)
         # copy weight to net_glob
         if not args.agg == 'fg':
             net_glob.load_state_dict(w_glob)
@@ -252,7 +268,8 @@ if __name__ == '__main__':
         net_local = LocalUpdate(args=args, dataset=dataset_test, idxs=test_users[args.attack_label], tb=summary, attack_label=args.attack_label,
                                     test_flag=True)
         att_acc, att_loss = net_local.test(net=net_glob)
-        print("attack success rate for attacker is {:.2f}%".format(att_acc * 100.))
+        if args.num_attackers > 0:
+            print("attack success rate for attacker is {:.2f}%".format(att_acc * 100.))
         att_acc_list.append(att_acc)
         # poisoned test data
         if args.is_backdoor:
@@ -266,7 +283,7 @@ if __name__ == '__main__':
         loss_train.append(loss_avg)
 
     print(entrpopies,  file=open('./entropies.txt', 'w'))
-    save_folder='../save/'
+    save_folder='./save/'
     results='./results/'
 
     print('distances_actual: ', distances_actual)
@@ -324,14 +341,16 @@ if __name__ == '__main__':
     plt.title('Accuracy against epochs')
     plt.ylabel('Accuracy')
     plt.xlabel('epoch')
-    plt.plot(range(len(avg_acc)), avg_acc)
+    plt.plot(range(1, len(avg_acc)+1), avg_acc, color='green',
+         marker='x', linestyle='dashed', linewidth=1.2, markersize=4, markevery=4)
+    plt.grid(linestyle = '--', linewidth = 0.5)
     plt.savefig(
-        save_folder+'avg_acc_{}_{}_{}_{}_users{}_attackers_{}_attackep_{}_thresh_{}_iid{}.png'.format(args.agg,args.dataset,
+        save_folder+'avg_acc_{}_{}_{}_{}_users{}_attackers_{}_attackep_{}_thresh_{}_iid{}_noise{}.png'.format(args.agg,args.dataset,
                                                                                            args.model, args.epochs,
                                                                                            args.num_users - args.num_attackers,
                                                                                            args.num_attackers,
                                                                                            args.attacker_ep,
-                                                                                           args.thresh,args.iid))
+                                                                                           args.thresh,args.iid, args.noise))
     print('avg_acc--', avg_acc)
     print('Average agg time: ', total_agg_time/args.epochs, total_agg_time)
     # plot acc by class
@@ -352,24 +371,31 @@ if __name__ == '__main__':
         j.set_color(colors[i])
     plt.legend([str(i) for i in range(len(accs_np))], loc='lower right')
     plt.savefig(
-        save_folder+'acc_{}_{}_{}_{}_users{}_attackers_{}_attackep_{}_thresh_{}_iid{}.png'.format(args.agg,args.dataset,
+        save_folder+'acc_{}_{}_{}_{}_users{}_attackers_{}_attackep_{}_thresh_{}_iid{}_noise{}.png'.format(args.agg,args.dataset,
                                                                                            args.model, args.epochs,
                                                                                            args.num_users - args.num_attackers,
                                                                                            args.num_attackers,
                                                                                            args.attacker_ep,
-                                                                                           args.thresh,args.iid))
+                                                                                           args.thresh,args.iid, args.noise))
     # plot loss curve
     plt.figure()
-    plt.plot(range(len(loss_train)), loss_train)
+    plt.plot(range(1, len(loss_train)+1), loss_train, color='red',
+         marker='x', linestyle='dashed', linewidth=1.2, markersize=4, markevery=4)
+    plt.grid(linestyle = '--', linewidth = 0.5)
     plt.title('Training Loss against epochs')
     plt.ylabel('train_loss')
     plt.xlabel('epoch')
-    plt.savefig(save_folder+'fed_{}_{}_{}_{}_C{}_iid{}.png'.format(args.agg,args.dataset, args.model, args.epochs, args.frac, args.iid))
+    plt.savefig(save_folder+'fed_{}_{}_{}_{}_C{}_iid{}_noise{}.png'.format(args.agg,args.dataset, args.model, args.epochs, args.frac, args.iid, args.noise))
 
     # Saving results into files
-    print(loss_train,  file=open('./results/fedAvg/loss.txt', 'w'))
-    print(att_acc_list,  file=open('./results/fedAvg/asr.txt', 'w'))
-    print(avg_acc,  file=open('./results/fedAvg/accuracy.txt', 'w'))
+    if args.agg == "euclidean_distance":
+        print(loss_train,  file=open('./results/e_d/loss.txt', 'w'))
+        print(att_acc_list,  file=open('./results/e_d/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/e_d/accuracy.txt', 'w'))
+    elif args.agg == "average":
+        print(loss_train,  file=open('./results/fedAvg/loss.txt', 'w'))
+        print(att_acc_list,  file=open('./results/e_d/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/e_d/accuracy.txt', 'w'))
     # print('loss_train--', loss_train)
 
     if args.is_backdoor:

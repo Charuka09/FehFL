@@ -18,7 +18,7 @@ from collections import OrderedDict
 eps = np.finfo(float).eps
 
 
-def aggregate_weights(args, w_locals, net_glob, reweights, fg):
+def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg):
     # update global weights
     # choices are ['euclidean_distance', 'average', 'median', 
     #              'trimmed_mean', 'repeated', 'irls', 'krum', 
@@ -27,9 +27,12 @@ def aggregate_weights(args, w_locals, net_glob, reweights, fg):
     agg_time = 0
     distListActual = []
     distListMalicious = []
-    if args.agg == 'euclidean_distance':
+    if args.agg == 'euclidean_distance' and not args.noise:
         print("using euclidean distance average Estimator")
-        w_glob, agg_time, distListActual, distListMalicious  = euclidean_distance_average(w_locals, net_glob)
+        w_glob, agg_time, distListActual, distListMalicious = euclidean_distance_average_final(w_locals)
+    elif args.noise and args.agg == 'euclidean_distance':
+        print("Two Local Updates apporach using euclidean distance average Estimator")
+        w_glob, agg_time, distListActual, distListMalicious = euclidean_distance_average_with_noise(w_locals, w_local_noise)
     elif args.agg == 'median':
         print("using simple median Estimator")
         w_glob = simple_median(w_locals)
@@ -127,50 +130,78 @@ def convert_tensor_to_np_arr(tensor):
 
     return model_vector
 
-def euclidean_distance_average(w, global_model):
-    dist_list_actual = []
-    dist_list_malicious = []
-    w_local_total = []
-    w_avg = copy.deepcopy(w[0])
-    w_avg_copy = copy.deepcopy(w[0])
-    total_num = 0 
-    cur_time = time.time()
+def euclidean_distance(w, w_glob):
+    distances, dist_list_actual, dist_list_malicious = [], [], []
     device = w[0][list(w[0].keys())[0]].device
-    total_dist = 0
+    for model in w:
+        distance = 0.0
+        for param_name in w_glob.keys():
+            param1 = model[param_name].to(device)
+            param2 = w_glob[param_name].to(device)
+            distance += torch.norm(param1 - param2)**2
+        distances.append(torch.sqrt(distance).item())
+    return distances, dist_list_actual, dist_list_malicious
 
-    ## Code snippet is to pritn the layers and their shapes 
-    # for k in w_avg.keys():
-    #     shape = w_avg[k].shape        
-    #     num_shape = reduce(lambda x, y: x * y, shape)
-    #     print(k, shape, num_shape)
-
-    #     total_num += num_shape
-
-    y_list_g = global_model.to(device)
-    w_global = y_list_g.state_dict()
-    result_dict = OrderedDict()
-
-    w_glob_data_arr = convert_tensor_to_np_arr(w_global)
-
-    for i in range(len(w)):
-        w_local_data_arr = convert_tensor_to_np_arr(w[i])
-        dist = np.linalg.norm(w_glob_data_arr - w_local_data_arr)
-        # print('dist..........', dist)
-        if dist < 0:
-           dist_list_actual.append(dist)
-        else:
-            dist_list_malicious.append(dist)
-        total_dist += (1/dist)
-        for k in w_avg.keys():
-            y = w[i][k] / dist
-            w_avg[k] += y
+def euclidean_distance_average_final(w):
+    """
+    Average local models based on Euclidean distance to the global model.
     
-    for k in w_avg.keys():
-        w_avg[k] -= w_avg_copy[k]
-        w_avg[k] = torch.div(w_avg[k], total_dist)
-    agg_time = time.time() - cur_time
-    return w_avg, agg_time, dist_list_actual, dist_list_malicious
+    Args:
+    - w (list): List of local model state dictionaries.
+    - global_model_state_dict (dict): Global model state dictionary.
 
+    Returns:
+    - Averaged model state dictionary.
+    """
+    # Calculate distances and weights
+    device = w[0][list(w[0].keys())[0]].device
+    cur_time = time.time()
+    w_glob, agg_time = average_weights(w)
+    for param_name, param in w_glob.items():
+        w_glob[param_name] = param.to(device)
+    for model in w:
+        for param_name, param in model.items():
+            model[param_name] = param.to(device)
+    distances, dist_actual, dist_malicious = euclidean_distance(w, w_glob)
+    print("distances", distances)
+    weights = [1.0 / dist for dist in distances]
+    total_weight = sum(weights)
+    
+    # Compute weighted average of entire models
+    averaged_model_state_dict = {}
+    for key in w_glob.keys():
+        weighted_sum = sum(weights[i] * local_model_state_dict[key] for i, local_model_state_dict in enumerate(w))
+        averaged_model_state_dict[key] = weighted_sum / total_weight
+    
+    agg_time = time.time() - cur_time
+    return averaged_model_state_dict, agg_time, dist_actual, dist_malicious
+
+def euclidean_distance_average_with_noise(w, w_local_noise):
+
+    device = w[0][list(w[0].keys())[0]].device
+    cur_time = time.time()
+    w_glob, agg_time = average_weights(w)
+    for param_name, param in w_glob.items():
+        w_glob[param_name] = param.to(device)
+    for model in w:
+        for param_name, param in model.items():
+            model[param_name] = param.to(device)
+    for model in w_local_noise:
+        for param_name, param in model.items():
+            model[param_name] = param.to(device)
+    distances, dist_actual, dist_malicious = euclidean_distance(w_local_noise, w_glob)
+    print("distances", distances)
+    weights = [1.0 / dist for dist in distances]
+    total_weight = sum(weights)
+    
+    # Compute weighted average of entire models
+    averaged_model_state_dict = {}
+    for key in w_glob.keys():
+        weighted_sum = sum(weights[i] * local_model_state_dict[key] for i, local_model_state_dict in enumerate(w))
+        averaged_model_state_dict[key] = weighted_sum / total_weight
+    
+    agg_time = time.time() - cur_time
+    return averaged_model_state_dict, agg_time, dist_actual, dist_malicious
 
 def special(w, global_model):
   dist_list = []

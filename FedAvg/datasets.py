@@ -38,7 +38,10 @@ def build_datasets(args):
             elif args.fix_total:
                 assert args.iid == False
                 # valid seed 3 4 9 13 1237
-                dict_users, user_has_one, user_has_zero = mnist_noniid(dataset_train, args.num_users, args.is_dynamic)
+                if args.is_dynamic:
+                    dict_users, user_has_one, user_has_zero = mnist_noniid(dataset_train, args.num_users, args.is_dynamic)
+                else:
+                    dict_users, user_has_one, user_has_zero = mnist_noniid_fixed_total(dataset_train, args.num_users)
                 np.random.seed(args.seed)
                 if args.attack_label < 0 and args.donth_attack:
                     attackers = np.random.choice(user_has_zero, args.num_attackers, replace=False)
@@ -190,11 +193,11 @@ def mnist_noniid(dataset, num_users, is_dynamic):
             entropy = -np.sum(probabilities * np.log2(probabilities))
             print('entropy', entropy)
             entropy_list.append(entropy)
-    print('entropy_list', entropy_list)
+            print('entropy_list', entropy_list)
     return dict_users, user_has_one, user_has_zero
 
 
-def mnist_noniid_fixed_total(dataset, num_users, is_dynamic):
+def mnist_noniid_fixed_total(dataset, num_users, is_dynamic=False):
     """
     Sample non-I.I.D client data from MNIST dataset
     :param dataset:
