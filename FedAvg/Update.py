@@ -8,6 +8,7 @@ from torch.utils.data import DataLoader, Dataset
 import numpy as np
 import time
 from sklearn import metrics
+import copy
 
 
 class DatasetSplit(Dataset):
@@ -16,8 +17,8 @@ class DatasetSplit(Dataset):
         self.idxs = list(idxs)
         self.attack_label = attack_label
         if self.attack_label >= 0:
-            if self.attack_label != 0 and self.attack_label != 1 and self.attack_label != 3:
-                print('currently attack label only supports 0 for loan dataset, 1 for mnist and 3 (Cat) for cifar, not {}'.format(
+            if self.attack_label != 0 and self.attack_label != 1 and self.attack_label != 3 and self.attack_label != 10:
+                print('currently attack label only supports 0 for loan dataset, 1 for mnist and 3 (Cat) for cifar, 10 (Chair) for cifar-100 not {}'.format(
                     self.attack_label))
                 exit(-1)
 
@@ -33,6 +34,8 @@ class DatasetSplit(Dataset):
                 label = label + 2
             elif label == self.attack_label == 0:   # loan dataset
                 label = 1
+            elif label == self.attack_label == 10:
+                label = label + 5 # Bowl → Camel, May be later ###### Chair → Couch, Dolphin → Girl, Lamp → Man, Mouse → Palm Tree
 
         return image, label
 
@@ -147,6 +150,24 @@ class LocalUpdate(object):
                 net.state_dict()[name].copy_(new_value)
 
         return net.state_dict(), sum(epoch_loss) / len(epoch_loss), net
+    
+    def update_weights_with_lsfe(self, net):
+        w_1, loss, _update_net = self.update_weights(net)
+        original_state_dict = net
+        w_2 = copy.deepcopy(w_1)
+
+        # Function to remove Gaussian noise to tensor
+        def add_and_remove_gaussian_noise(tensor, std_factor=1):
+            noise = torch.randn_like(tensor) * tensor.std() * std_factor
+            # print(noise)
+            return tensor + noise, tensor - noise
+
+        for name, param in w_1.items():
+            w_1[name], w_2[name] = add_and_remove_gaussian_noise(param)
+            print(w_1[name], w_2[name])
+            break
+        
+        return original_state_dict, w_1, w_2, loss, _update_net
 
     def update_weights_with_noise(self, net):
         net, loss, _updated_net = self.update_weights(net)
@@ -311,8 +332,8 @@ class LocalUpdate(object):
         return acc, loss.item()
 
     def backdoor_test(self, net):
-        if self.backdoor_label < 0:
-            return None, None
+        # if self.backdoor_label < 0:
+        #     return None, None
         acc = 0.0
         total_len = 0
         for batch_idx, (images, labels) in enumerate(self.ldr_test):

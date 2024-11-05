@@ -27,7 +27,11 @@ def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg):
     agg_time = 0
     distListActual = []
     distListMalicious = []
-    if args.agg == 'euclidean_distance' and not args.noise:
+    if args.agg == 'lsfe':
+        print("using lightweight secure average Estimator")
+        w_glob, agg_time = lsfe(w_locals)
+        pass
+    elif args.agg == 'euclidean_distance' and not args.noise:
         print("using euclidean distance average Estimator")
         w_glob, agg_time, distListActual, distListMalicious = euclidean_distance_average_final(w_locals)
     elif args.noise and args.agg == 'euclidean_distance':
@@ -89,6 +93,8 @@ def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg):
         exit('Error: unrecognized aggregation method')
     return w_glob, agg_time, distListActual, distListMalicious
 
+def lsfe(w_locals):
+    return 0
 
 def average_weights(w):
     cur_time = time.time()

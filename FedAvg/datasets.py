@@ -24,9 +24,12 @@ def build_datasets(args):
         if args.is_backdoor:
             if args.iid:
                 dict_users = iid(dataset_train, args.num_users + args.num_attackers, args.is_dynamic)
+                user_list = [x for x in range(args.num_users)]
+                attackers = np.random.choice(user_list, args.num_attackers, replace=False)
+                print('attackers {} are selected from {}'.format(attackers, user_list))
             else:  # dirichlet sample users
                 dict_users = sample_dirichlet_train_data(dataset_train, args.num_users, args.num_attackers)
-        elif args.iid:
+        elif args.iid and not args.is_backdoor:
             dict_users = iid(dataset_train, args.num_users, args.is_dynamic)
             user_list = [x for x in range(args.num_users)]
             attackers = np.random.choice(user_list, args.num_attackers, replace=False)
@@ -66,8 +69,33 @@ def build_datasets(args):
         ])
         dataset_train = datasets.CIFAR10('../data/cifar', train=True, transform=transform_train, download=True)
         dataset_test = datasets.CIFAR10('../data/cifar', train=False, transform=transform_test, download=True)
+        attackers = []
         if args.iid:
             dict_users = iid(dataset_train, args.num_users + args.num_attackers, args.is_dynamic)
+            user_list = [x for x in range(args.num_users)]
+            attackers = np.random.choice(user_list, args.num_attackers, replace=False)
+        else:  # dirichlet sample users
+            dict_users = sample_dirichlet_train_data(dataset_train, args.num_users, args.num_attackers)
+    elif args.dataset == 'cifar-100':
+        print('==> Preparing CIFAR data..')
+        transform_train = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+
+        transform_test = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
+        ])
+        dataset_train = datasets.CIFAR100('../data/cifar-100', train=True, transform=transform_train, download=True)
+        dataset_test = datasets.CIFAR100('../data/cifar-100', train=False, transform=transform_test, download=True)
+        attackers = []
+        if args.iid:
+            dict_users = iid(dataset_train, args.num_users, args.is_dynamic)
+            user_list = [x for x in range(args.num_users)]
+            attackers = np.random.choice(user_list, args.num_attackers, replace=False)
         else:  # dirichlet sample users
             dict_users = sample_dirichlet_train_data(dataset_train, args.num_users, args.num_attackers)
     elif args.dataset == 'loan':
@@ -99,13 +127,15 @@ def iid(dataset, num_users, is_dynamic):
     """
     num_items = int(len(dataset)/num_users)
     dict_users = {i: np.array([]) for i in range(num_users)}
-    all_idxs = {}, [i for i in range(len(dataset))]
+    all_idxs = [i for i in range(len(dataset))]
+    print(num_items, len(dataset), num_users, len(all_idxs))
+    labels = None
+    entropy_list = []
     if is_dynamic:
         num_items = int((len(dataset)-10000)/num_users)
         all_idxs = [i for i in range(len(dataset)-10000)]
+        labels = dataset.targets.numpy()[:50000]
     idxs = np.arange(len(dataset)-10000)
-    labels = dataset.targets.numpy()[:50000]
-    entropy_list = []
     print('iid data setting')
     for i in range(num_users):
         dict_users[i] = set(np.random.choice(all_idxs, num_items, replace=False))
@@ -118,6 +148,7 @@ def iid(dataset, num_users, is_dynamic):
             entropy = -np.sum(probabilities * np.log2(probabilities))
             entropy_list.append(entropy)
     # print(entropy_list)
+    # print('dict users...........', type(dict_users), dict_users[0], dict_users[99])
     return dict_users
 
 
@@ -336,7 +367,12 @@ def test_sampling_as_numbers(dataset_name, dataset, num_labels):
     if dataset_name == 'mnist':
         labels = np.array(dataset.test_labels)
     elif dataset_name == 'cifar':
-        labels = np.array(dataset.test_labels)
+        # print('herer.........',type(dataset), len(dataset.targets))
+        labels = np.array(dataset.targets)
+    elif dataset_name == 'cifar-100':
+        labels = np.array(dataset.targets)
+        num_labels = 100
+        dict_users = {i: np.array([]) for i in range(num_labels)}
     else:
         print('dataset not supported')
         exit(-1)

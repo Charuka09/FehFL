@@ -6,14 +6,16 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
-from resnet import ResNet18
+from resnet import ResNet18, ResNet50, ResNet34
 
 
 def build_model(args):
     if args.model == 'smallcnn' and args.dataset == 'mnist':
         net_glob = SmallCNNMnist(args=args)
     elif args.dataset == 'cifar':
-        net_glob = ResNet18(args)
+        net_glob = ResNet18(args=args)
+    elif args.dataset == 'cifar-100':
+        net_glob = ResNet50(args=args)
     elif args.model == 'loannet' and args.dataset == 'loan':
         net_glob = LoanNet()
 
@@ -80,6 +82,24 @@ class SmallCNNMnist(nn.Module):
         x = self.fc2(x)
         return F.log_softmax(x, dim=1)
 
+class SimpleCNN(nn.Module):
+    def __init__(self):
+        super(SimpleCNN, self).__init__()
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=5, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=5, padding=1)
+        self.fc1 = nn.Linear(64 * 8 * 8, 128)
+        self.fc2 = nn.Linear(128, 10)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = F.relu(self.conv2(x))
+        x = F.max_pool2d(x, 2, 2)
+        x = x.view(-1, 64 * 8 * 8)
+        x = F.relu(self.fc1(x))
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
+        
 class LoanNet(nn.Module):
     def __init__(self, in_dim=92, n_hidden_1=46, n_hidden_2=23, out_dim=9):
         super(LoanNet, self).__init__()

@@ -36,6 +36,21 @@ def test(net_g, dataset, args, dict_users):
                    'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     elif args.dataset == "loan":
         classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8')
+    elif args.dataset == "cifar-100":
+        classes = ('apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle',
+           'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel',
+           'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 
+           'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 
+           'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 
+           'house', 'kangaroo', 'keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 
+           'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 
+           'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 
+           'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 
+           'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 
+           'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 
+           'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 
+           'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 
+           'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm')
     with torch.no_grad():
         added_acc=0
         added_loss=0
@@ -94,16 +109,16 @@ if __name__ == '__main__':
     if args.dataset == 'mnist' and args.num_attackers > 0:
         assert args.attack_label == 1 or (args.donth_attack and args.attack_label < 0)
     elif args.dataset == 'cifar' and args.num_attackers > 0:
-        assert args.attack_label == 3
+        assert args.attack_label == 3 or (args.donth_attack and args.attack_label < 0)
     elif args.dataset == 'loan' and args.num_attackers > 0:
         assert args.attack_label == 0
+    elif args.dataset == 'cifar-100' and args.num_attackers > 0:
+        assert args.attack_label == 10 or (args.donth_attack and args.attack_label < 0)
 
     # build model
     if args.gpu != -1:
         torch.cuda.set_device(args.gpu)
     net_glob = build_model(args)
-
-    print(net_glob)
 
     # init FoolsGold
     if args.agg == 'fg':
@@ -167,8 +182,6 @@ if __name__ == '__main__':
                 idx_update = np.array(idx_update)
                 if isinstance(dict_users[idx], set):
                     dict_users[idx] = np.array(list(dict_users[idx]))
-                # print(dict_users[idx].shape)
-                # print(idx_update.shape)
                 dict_users[idx] = np.concatenate((dict_users[idx], idx_update), axis=0)
                 user_labels = [labels[np.where(label_idxs == item)][0] for item in dict_users[idx]]
                 bin_count = np.bincount(user_labels)
@@ -209,9 +222,10 @@ if __name__ == '__main__':
                 temp_net = copy.deepcopy(net_glob)
                 if args.agg == 'fg':
                     w, loss, _poisoned_net = local.update_gradients(net=temp_net)
+                elif args.agg == 'lsfe':
+                    w, w_1, w_2, loss, updated_net = local.update_weights_with_lsfe(net=temp_net)
                 elif args.noise:
                     w, w_noise, loss, _updated_net = local.update_weights_with_noise(net=temp_net)
-                    # print(w_locals_noise)
                     print([w, w_noise],  file=open('./results_noise/results.txt', 'w'))
                 else:
                     w, loss, _poisoned_net = local.update_weights(net=temp_net)
@@ -228,9 +242,11 @@ if __name__ == '__main__':
                 temp_net = copy.deepcopy(net_glob)
                 if args.agg == 'fg':
                     w, loss, _updated_net = local.update_gradients(net=temp_net)
+                elif args.agg == 'lsfe':
+                    w, w_1, w_2, loss, updated_net = local.update_weights_with_lsfe(net=temp_net)
                 elif args.noise:
                     w, w_noise, loss, _updated_net = local.update_weights_with_noise(net=temp_net)
-                    w_locals_noise, invalid_model_idx_noise= get_valid_models(w_locals)
+                    w_locals_noise, invalid_model_idx_noise = get_valid_models(w_locals)
                     # print("invalid_model_idx_noise--------", invalid_model_idx_noise)
                     print([w, w_noise],  file=open('./results_noise/results.txt', 'w'))
                 else:
@@ -282,6 +298,7 @@ if __name__ == '__main__':
             print('\nTrain loss:', loss_avg)
         loss_train.append(loss_avg)
 
+    print('backdoor_acc.....', backdoor_accs) 
     print(entrpopies,  file=open('./entropies.txt', 'w'))
     save_folder='./save/'
     results='./results/'
@@ -304,7 +321,21 @@ if __name__ == '__main__':
                    'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
     elif args.dataset == "loan":
         classes = ('0', '1', '2', '3', '4', '5', '6', '7', '8')
-
+    elif args.dataset == "cifar-100":
+        classes = ('apple', 'aquarium_fish', 'baby', 'bear', 'beaver', 'bed', 'bee', 'beetle',
+           'bicycle', 'bottle', 'bowl', 'boy', 'bridge', 'bus', 'butterfly', 'camel',
+           'can', 'castle', 'caterpillar', 'cattle', 'chair', 'chimpanzee', 'clock', 
+           'cloud', 'cockroach', 'couch', 'crab', 'crocodile', 'cup', 'dinosaur', 
+           'dolphin', 'elephant', 'flatfish', 'forest', 'fox', 'girl', 'hamster', 
+           'house', 'kangaroo', 'keyboard', 'lamp', 'lawn_mower', 'leopard', 'lion', 
+           'lizard', 'lobster', 'man', 'maple_tree', 'motorcycle', 'mountain', 'mouse', 
+           'mushroom', 'oak_tree', 'orange', 'orchid', 'otter', 'palm_tree', 'pear', 
+           'pickup_truck', 'pine_tree', 'plain', 'plate', 'poppy', 'porcupine', 
+           'possum', 'rabbit', 'raccoon', 'ray', 'road', 'rocket', 'rose', 'sea', 
+           'seal', 'shark', 'shrew', 'skunk', 'skyscraper', 'snail', 'snake', 'spider', 
+           'squirrel', 'streetcar', 'sunflower', 'sweet_pepper', 'table', 'tank', 
+           'telephone', 'television', 'tiger', 'tractor', 'train', 'trout', 'tulip', 
+           'turtle', 'wardrobe', 'whale', 'willow_tree', 'wolf', 'woman', 'worm')
     added_acc = 0
     added_loss = 0
     added_data_num = 0
@@ -352,7 +383,8 @@ if __name__ == '__main__':
                                                                                            args.attacker_ep,
                                                                                            args.thresh,args.iid, args.noise))
     print('avg_acc--', avg_acc)
-    print('Average agg time: ', total_agg_time/args.epochs, total_agg_time)
+    print('Average agg time: ', total_agg_time/args.epochs)
+    print('Total agg time:', total_agg_time)
     # plot acc by class
     fig1 = plt.figure()
     ax1 = fig1.add_subplot(111)
@@ -389,14 +421,63 @@ if __name__ == '__main__':
 
     # Saving results into files
     if args.agg == "euclidean_distance":
-        print(loss_train,  file=open('./results/e_d/loss.txt', 'w'))
-        print(att_acc_list,  file=open('./results/e_d/asr.txt', 'w'))
-        print(avg_acc,  file=open('./results/e_d/accuracy.txt', 'w'))
+        results = './results/e_d/'
+        # print(loss_train,  file=open('./results/e_d/loss.txt', 'w'))
+        # print(att_acc_list,  file=open('./results/e_d/asr.txt', 'w'))
+        # print(avg_acc,  file=open('./results/e_d/accuracy.txt', 'w'))
     elif args.agg == "average":
+        results = './results/fedAvg/'
         print(loss_train,  file=open('./results/fedAvg/loss.txt', 'w'))
-        print(att_acc_list,  file=open('./results/e_d/asr.txt', 'w'))
-        print(avg_acc,  file=open('./results/e_d/accuracy.txt', 'w'))
+        print(att_acc_list,  file=open('./results/fedAvg/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/fedAvg/accuracy.txt', 'w'))
+    elif args.agg == "median":
+        results = './results/median/'
+        print(loss_train,  file=open('./results/median/loss.txt', 'w'))
+        print(att_acc_list,  file=open('./results/median/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/median/accuracy.txt', 'w'))
+    elif args.agg == "trimmed_mean":
+        results = './results/mean/'
+        print(loss_train,  file=open('./results/mean/loss.txt', 'w'))
+        print(att_acc_list,  file=open('./results/mean/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/mean/accuracy.txt', 'w'))
+    elif args.agg == "krum":
+        results = './results/krum/'
+        print(loss_train,  file=open('./results/krum/loss.txt', 'w'))
+        print(att_acc_list,  file=open('./results/krum/asr.txt', 'w'))
+        print(avg_acc,  file=open('./results/krum/accuracy.txt', 'w'))
     # print('loss_train--', loss_train)
+    try:
+        os.makedirs(results, exist_ok=True)
+        print(f"Directory {results} is ready.")
+    except Exception as e:
+        print(f"Error creating directory: {e}")
+
+    # Construct file paths dynamically
+    try:
+        accuracy_filename = os.path.join(results, 'accuracy_{}_{}.txt'.format(
+            args.dataset, args.num_attackers
+        ))
+        asr_filename = os.path.join(results, 'asr_{}_{}.txt'.format(
+            args.dataset, args.num_attackers
+        ))
+
+        print(f"Accuracy filename: {accuracy_filename}")
+        print(f"ASR filename: {asr_filename}")
+
+        # Save accuracy to the dynamically named .txt file
+        with open(accuracy_filename, 'w') as f:
+            print(f"Writing accuracy to {accuracy_filename}")
+            print(avg_acc, file=f)
+
+        # Save ASR list to the dynamically named .txt file
+        with open(asr_filename, 'w') as f:
+            print(f"Writing ASR to {asr_filename}")
+            print(att_acc_list, file=f)
+
+        print("Files created and written successfully.")
+
+    except Exception as e:
+        print(f"Error writing to file: {e}")
 
     if args.is_backdoor:
         # plot backdoor acc
@@ -419,6 +500,5 @@ if __name__ == '__main__':
                                                                                                          args.model,
                                                                                                          args.epochs,
                                                                                                          args.num_users - args.num_attackers,
-                                                                                                         args.num_attackers,
-                                                                                                         args.attacker_ep,
+                                                                                                         args.num_attackers,                                                                                                   args.attacker_ep,
                                                                                                          args.thresh, args.iid))

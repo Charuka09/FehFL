@@ -57,7 +57,7 @@ def args_parser():
     parser.add_argument('--agg', type=str, default='average', choices=['euclidean_distance', 'average', 'median', 'trimmed_mean',
                                                                            'repeated', 'irls', 'simple_irls', 'krum',
                                                                            'irls_median', 'irls_theilsen',
-                                                                           'irls_gaussian', 'fg'],
+                                                                           'irls_gaussian', 'fg', 'lsfe'],
                         help="Aggregation methods")
     parser.add_argument('--Lambda', type=float, default=2.0, help='set lambda of irls (default: 2.0)')
     parser.add_argument('--thresh', type=float, default=0.1, help='set thresh of irls restriction (default: 0.1)')
