@@ -1,6 +1,7 @@
 # pycharm
 .idea/*
-
+.venv/
+.vscode/*
 # documents
 *.csv
 .xls

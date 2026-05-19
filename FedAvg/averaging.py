@@ -18,7 +18,132 @@ from collections import OrderedDict
 eps = np.finfo(float).eps
 
 
-def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg):
+def fltrust(w_locals, root_w, w_glob):
+    """FLTrust (Cao et al., 2020): cosine-similarity trust scores against server root update."""
+    cur_time = time.time()
+    device = w_locals[0][list(w_locals[0].keys())[0]].device
+
+    def flatten_delta(w):
+        return torch.cat([(w[k].float() - w_glob[k].float()).view(-1) for k in w_glob.keys()])
+
+    root_delta = flatten_delta(root_w).to(device)
+    root_norm = root_delta.norm() + 1e-8
+
+    trust_scores = []
+    client_deltas = []
+    for w in w_locals:
+        delta = flatten_delta(w).to(device)
+        cos_sim = torch.dot(root_delta, delta) / (root_norm * (delta.norm() + 1e-8))
+        trust_scores.append(max(0.0, cos_sim.item()))
+        client_deltas.append(delta)
+
+    total_trust = sum(trust_scores)
+    if total_trust < 1e-8:
+        print("FLTrust: all trust scores zero, falling back to simple average")
+        w_avg, _ = average_weights(w_locals)
+        return w_avg
+
+    # Normalize each client update to root update magnitude then weight by trust score
+    w_agg = copy.deepcopy(w_glob)
+    offset = 0
+    root_delta_cpu = root_delta.cpu()
+    for k in w_glob.keys():
+        size = w_glob[k].numel()
+        shape = w_glob[k].shape
+        root_slice = root_delta_cpu[offset:offset + size]
+        root_slice_norm = root_slice.norm() + 1e-8
+        weighted_delta = torch.zeros(size, dtype=torch.float32)
+        for ts, delta in zip(trust_scores, client_deltas):
+            if ts > 0:
+                client_slice = delta.cpu()[offset:offset + size]
+                client_norm = client_slice.norm() + 1e-8
+                normalized = client_slice * (root_slice_norm / client_norm)
+                weighted_delta += ts * normalized
+        weighted_delta /= total_trust
+        w_agg[k] = (w_glob[k].float().cpu() + weighted_delta.reshape(shape)).to(w_glob[k].dtype).to(device)
+        offset += size
+
+    print('FLTrust aggregation took {:.3f}s'.format(time.time() - cur_time))
+    agg_time = time.time() - cur_time
+    return w_agg, agg_time
+
+
+def dp_fl(w_locals, clip_norm=1.0, sigma=0.1):
+    """DP-FL: federated learning with gradient clipping and Gaussian noise."""
+    cur_time = time.time()
+    device = w_locals[0][list(w_locals[0].keys())[0]].device
+
+    clipped = []
+    for w in w_locals:
+        w_flat = torch.cat([v.view(-1).float() for v in w.values()])
+        norm = w_flat.norm().item()
+        clip_factor = min(1.0, clip_norm / (norm + 1e-8))
+        w_clipped = {k: (v.float() * clip_factor).to(v.dtype) for k, v in w.items()}
+        clipped.append(w_clipped)
+
+    w_avg, _ = average_weights(clipped)
+
+    noise_scale = sigma * clip_norm / len(w_locals)
+    for k in w_avg.keys():
+        noise = torch.randn_like(w_avg[k].float()) * noise_scale
+        w_avg[k] = (w_avg[k].float() + noise.to(device)).to(w_avg[k].dtype)
+
+    print('DP-FL aggregation took {:.3f}s'.format(time.time() - cur_time))
+    agg_time = time.time() - cur_time
+    return w_avg, agg_time
+
+
+def brea(w_locals, clip_factor=2.0):
+    """BREA: Byzantine Resilient Aggregation via distance-based filtering + averaging."""
+    cur_time = time.time()
+
+    def flatten(w):
+        return torch.cat([v.view(-1).float() for v in w.values()])
+
+    vectors = [flatten(w) for w in w_locals]
+    mean_vec = torch.stack(vectors).mean(dim=0)
+    distances = [torch.norm(v - mean_vec).item() for v in vectors]
+
+    median_dist = float(np.median(distances))
+    mad = float(np.median([abs(d - median_dist) for d in distances])) + 1e-8
+    threshold = median_dist + clip_factor * 1.4826 * mad
+
+    filtered = [w for w, d in zip(w_locals, distances) if d <= threshold]
+    if not filtered:
+        filtered = w_locals
+    print('BREA: retained {}/{} updates (threshold={:.4f})'.format(len(filtered), len(w_locals), threshold))
+
+    w_avg, _ = average_weights(filtered)
+    print('BREA aggregation took {:.3f}s'.format(time.time() - cur_time))
+    agg_time = time.time() - cur_time
+    return w_avg, agg_time
+
+
+def rsa(w_locals):
+    """RSA: Robust Stochastic Aggregation — random sharding + per-shard median + mean."""
+    cur_time = time.time()
+    n = len(w_locals)
+    num_shards = max(2, int(math.sqrt(n)))
+
+    indices = list(range(n))
+    np.random.shuffle(indices)
+    shard_size = max(1, n // num_shards)
+    shards = [indices[i * shard_size:(i + 1) * shard_size] for i in range(num_shards)]
+    if n % num_shards != 0:
+        shards[-1].extend(indices[num_shards * shard_size:])
+
+    shard_medians = []
+    for shard in shards:
+        shard_models = [w_locals[i] for i in shard]
+        shard_medians.append(simple_median(shard_models) if len(shard_models) > 1 else shard_models[0])
+
+    w_avg, _ = average_weights(shard_medians)
+    print('RSA aggregation took {:.3f}s'.format(time.time() - cur_time))
+    agg_time = time.time() - cur_time
+    return w_avg, agg_time
+
+
+def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg, server_update=None):
     # update global weights
     # choices are ['euclidean_distance', 'average', 'median', 
     #              'trimmed_mean', 'repeated', 'irls', 'krum', 
@@ -89,6 +214,23 @@ def aggregate_weights(args, w_locals, w_local_noise, net_glob, reweights, fg):
     elif args.agg == 'average':
         print("using average")
         w_glob, agg_time = average_weights(w_locals)
+    elif args.agg == 'fltrust':
+        print("using FLTrust")
+        w_glob_state = net_glob.state_dict()
+        if server_update is None:
+            print("FLTrust: no server update provided, falling back to average")
+            w_glob, agg_time = average_weights(w_locals)
+        else:
+            w_glob, agg_time = fltrust(w_locals, server_update, w_glob_state)
+    elif args.agg == 'dp_fl':
+        print("using DP-FL")
+        w_glob, agg_time = dp_fl(w_locals, args.dp_clip, args.dp_sigma)
+    elif args.agg == 'brea':
+        print("using BREA")
+        w_glob, agg_time = brea(w_locals)
+    elif args.agg == 'rsa':
+        print("using RSA")
+        w_glob, agg_time = rsa(w_locals)
     else:
         exit('Error: unrecognized aggregation method')
     return w_glob, agg_time, distListActual, distListMalicious

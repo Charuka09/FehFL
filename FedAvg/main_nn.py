@@ -18,7 +18,7 @@ from options import args_parser
 from Update import LocalUpdate
 from FedNets import build_model
 from averaging import aggregate_weights, get_valid_models, FoolsGold, IRLS_aggregation_split_restricted
-from attack import add_gaussian_noise, change_weight
+from attack import add_gaussian_noise, change_weight, model_poisoning_attack, min_max_attack
 import json
 import sys
 
@@ -105,14 +105,15 @@ if __name__ == '__main__':
     if not args.fix_total:
         args.num_users += args.num_attackers
 
-    # check poison attack
-    if args.dataset == 'mnist' and args.num_attackers > 0:
+    # check poison attack (model_poisoning/min_max don't use attack_label)
+    advanced_attack = args.attack_type in ('model_poisoning', 'min_max')
+    if args.dataset == 'mnist' and args.num_attackers > 0 and not advanced_attack:
         assert args.attack_label == 1 or (args.donth_attack and args.attack_label < 0)
-    elif args.dataset == 'cifar' and args.num_attackers > 0:
+    elif args.dataset == 'cifar' and args.num_attackers > 0 and not advanced_attack:
         assert args.attack_label == 3 or (args.donth_attack and args.attack_label < 0)
-    elif args.dataset == 'loan' and args.num_attackers > 0:
+    elif args.dataset == 'loan' and args.num_attackers > 0 and not advanced_attack:
         assert args.attack_label == 0
-    elif args.dataset == 'cifar-100' and args.num_attackers > 0:
+    elif args.dataset == 'cifar-100' and args.num_attackers > 0 and not advanced_attack:
         assert args.attack_label == 10 or (args.donth_attack and args.attack_label < 0)
 
     # build model
@@ -125,6 +126,15 @@ if __name__ == '__main__':
         fg = FoolsGold(args)
     else:
         fg = None
+
+    # FLTrust: sample a clean root dataset held at the server
+    if args.agg == 'fltrust':
+        all_train_idxs = list(range(len(dataset_train)))
+        np.random.seed(args.seed)
+        server_root_idxs = np.random.choice(all_train_idxs, args.root_dataset_size, replace=False)
+        print('FLTrust: server root dataset size = {}'.format(len(server_root_idxs)))
+    else:
+        server_root_idxs = None
 
     # copy weights
     w_glob = net_glob.state_dict()
@@ -167,6 +177,7 @@ if __name__ == '__main__':
         print('Epoch:', iter, "/", args.epochs)
         net_glob.train()
         w_locals, w_locals_noise, loss_locals = [], [], []
+        local_attacker_positions = []
         m = max(int(args.frac * args.num_users), 1)
         # print('taking {} users'.format(m))
         if args.frac == 1:
@@ -175,6 +186,7 @@ if __name__ == '__main__':
             idxs_users = np.random.choice(range(args.num_users), m, replace=False)
 
         for idx in idxs_users:
+            is_current_attacker = False
             w_noise = None
             if args.is_dynamic:
                 # Update each user with new data from the data queue
@@ -197,7 +209,7 @@ if __name__ == '__main__':
             if (idx >= args.num_users - args.num_attackers and not args.fix_total) or \
                     (args.fix_total and idx in attackers):
                 print('id and attackers', idx, attackers)
-            # if (idx >= args.num_users - args.num_attackers and not args.fix_total):
+                is_current_attacker = True
                 local_ep = args.local_ep
                 if args.attacker_ep != args.local_ep:
                     if args.dataset == 'loan':
@@ -212,8 +224,12 @@ if __name__ == '__main__':
                                         backdoor_label=args.backdoor_label)
                     else: # under one-single-shot mode; don't perform backdoor attack because it's not the scale epoch:
                         local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx], tb=summary)
+                elif args.attack_type in ('model_poisoning', 'min_max'):
+                    # No label flipping; perturbation is applied post-training
+                    local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx], tb=summary)
                 else:
                     if args.fix_total and args.attack_label < 0 and args.donth_attack:
+                        is_current_attacker = False
                         continue
                     else:
                         local = LocalUpdate(args=args, dataset=dataset_train, idxs=dict_users[idx], tb=summary,
@@ -229,6 +245,10 @@ if __name__ == '__main__':
                     print([w, w_noise],  file=open('./results_noise/results.txt', 'w'))
                 else:
                     w, loss, _poisoned_net = local.update_weights(net=temp_net)
+
+                # Apply model poisoning: scale the update relative to global model
+                if args.attack_type == 'model_poisoning':
+                    w = model_poisoning_attack(w, w_glob, args.mp_boost)
 
                 # change a portion of the model gradients to honest
                 if 0 < args.change_rate < 1.:
@@ -255,6 +275,12 @@ if __name__ == '__main__':
             w_locals_noise.append(copy.deepcopy(w_noise))
             w_locals.append(copy.deepcopy(w))
             loss_locals.append(copy.deepcopy(loss))
+            if is_current_attacker:
+                local_attacker_positions.append(len(w_locals) - 1)
+
+        # Apply min-max attack: perturb attacker updates after all are collected
+        if args.attack_type == 'min_max' and local_attacker_positions:
+            w_locals = min_max_attack(w_locals, local_attacker_positions, w_glob, args.mp_boost)
 
         # remove model with inf values
         w_locals, invalid_model_idx= get_valid_models(w_locals)
@@ -264,7 +290,15 @@ if __name__ == '__main__':
         if len(w_locals) == 0:
             break
             continue
-        w_glob, agg_time, dist_list_actual, dist_list_malicious = aggregate_weights(args, w_locals, w_locals_noise, net_glob, reweights, fg)
+
+        # Compute FLTrust server update on root dataset
+        server_update = None
+        if args.agg == 'fltrust' and server_root_idxs is not None:
+            server_temp_net = copy.deepcopy(net_glob)
+            server_local = LocalUpdate(args=args, dataset=dataset_train, idxs=server_root_idxs, tb=summary)
+            server_update, _, _ = server_local.update_weights(net=server_temp_net)
+
+        w_glob, agg_time, dist_list_actual, dist_list_malicious = aggregate_weights(args, w_locals, w_locals_noise, net_glob, reweights, fg, server_update=server_update)
         total_agg_time += agg_time
         print('Aggregation time - ', agg_time)
         distances_actual += dist_list_actual
@@ -445,6 +479,14 @@ if __name__ == '__main__':
         print(loss_train,  file=open('./results/krum/loss.txt', 'w'))
         print(att_acc_list,  file=open('./results/krum/asr.txt', 'w'))
         print(avg_acc,  file=open('./results/krum/accuracy.txt', 'w'))
+    elif args.agg == "fltrust":
+        results = './results/fltrust/'
+    elif args.agg == "dp_fl":
+        results = './results/dp_fl/'
+    elif args.agg == "brea":
+        results = './results/brea/'
+    elif args.agg == "rsa":
+        results = './results/rsa/'
     # print('loss_train--', loss_train)
     try:
         os.makedirs(results, exist_ok=True)
@@ -454,11 +496,12 @@ if __name__ == '__main__':
 
     # Construct file paths dynamically
     try:
-        accuracy_filename = os.path.join(results, 'accuracy_{}_{}.txt'.format(
-            args.dataset, args.num_attackers
+        attack_suffix = '' if args.attack_type == 'label_flipping' else '_{}'.format(args.attack_type)
+        accuracy_filename = os.path.join(results, 'accuracy_{}_{}{}.txt'.format(
+            args.dataset, args.num_attackers, attack_suffix
         ))
-        asr_filename = os.path.join(results, 'asr_{}_{}.txt'.format(
-            args.dataset, args.num_attackers
+        asr_filename = os.path.join(results, 'asr_{}_{}{}.txt'.format(
+            args.dataset, args.num_attackers, attack_suffix
         ))
 
         print(f"Accuracy filename: {accuracy_filename}")

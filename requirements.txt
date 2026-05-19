@@ -1,0 +1,12 @@
+numpy
+scipy
+pandas
+numexpr>=2.7.3
+matplotlib
+scikit-learn
+tqdm
+torch
+torchvision
+tensorboardX
+jupyter
+ipykernel

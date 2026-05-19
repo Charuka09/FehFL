@@ -57,12 +57,30 @@ def args_parser():
     parser.add_argument('--agg', type=str, default='average', choices=['euclidean_distance', 'average', 'median', 'trimmed_mean',
                                                                            'repeated', 'irls', 'simple_irls', 'krum',
                                                                            'irls_median', 'irls_theilsen',
-                                                                           'irls_gaussian', 'fg', 'lsfe'],
+                                                                           'irls_gaussian', 'fg', 'lsfe',
+                                                                           'fltrust', 'dp_fl', 'brea', 'rsa'],
                         help="Aggregation methods")
     parser.add_argument('--Lambda', type=float, default=2.0, help='set lambda of irls (default: 2.0)')
     parser.add_argument('--thresh', type=float, default=0.1, help='set thresh of irls restriction (default: 0.1)')
     parser.add_argument('--alpha', type=float, default=0.2, help='set thresh of trimmed mean (default: 0.2)')
     parser.add_argument('--use_memory', type=str2bool, default=True, help="use FoolsGold memory option")
+
+    # advanced attack arguments
+    parser.add_argument('--attack_type', type=str, default='label_flipping',
+                        choices=['label_flipping', 'model_poisoning', 'min_max'],
+                        help="Attack type (label_flipping uses --attack_label; model_poisoning/min_max scale updates)")
+    parser.add_argument('--mp_boost', type=float, default=10.0,
+                        help='Boost factor for model poisoning / gamma for min-max attack (default: 10.0)')
+
+    # DP-FL arguments
+    parser.add_argument('--dp_clip', type=float, default=1.0,
+                        help='Gradient clipping norm for DP-FL (default: 1.0)')
+    parser.add_argument('--dp_sigma', type=float, default=0.1,
+                        help='Gaussian noise sigma for DP-FL (default: 0.1)')
+
+    # FLTrust arguments
+    parser.add_argument('--root_dataset_size', type=int, default=100,
+                        help='Number of clean samples for FLTrust server root dataset (default: 100)')
 
     #Dynamic FL arguments
     parser.add_argument('--is_dynamic', type=int, default=0, help="use Dynamic Data Distribution")

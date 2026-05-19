@@ -24,10 +24,47 @@ This is a PyTorch implementation of our [paper](https://arxiv.org/abs/2303.11337
 
 ## Requirements: Software
 
-1. Pytorch from [the offical repository](https://pytorch.org/).
-2. Install tensorboardX.
+This project is implemented in Python and uses PyTorch for federated learning
+experiments. The main dependencies are:
+
+- `torch`
+- `torchvision`
+- `numpy`
+- `scipy`
+- `scikit-learn`
+- `pandas`
+- `numexpr`
+- `matplotlib`
+- `tqdm`
+- `tensorboardX`
+- `jupyter`
+- `ipykernel`
+
+Install all required Python packages with:
+
+```bash
+pip install -r requirements.txt
 ```
-pip install tensorboardX
+
+If you want a clean local environment, create and activate a virtual
+environment first:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+For GPU experiments, install the PyTorch build that matches your CUDA version
+from the [official PyTorch installation guide](https://pytorch.org/get-started/locally/)
+if the default `pip install -r requirements.txt` build is not appropriate for
+your system.
+
+To open and run the notebooks:
+
+```bash
+jupyter notebook
 ```
 ## Preparation for Training & Testing
 1. The code will automatically download MNIST dataset.
@@ -105,5 +142,3 @@ python main_nn.py --model smallcnn --epochs 200 --gpu 0 --iid 1 --fix_total --fr
 python main_nn.py --model smallcnn --epochs 200 --gpu 0 --iid 1 --fix_total --frac 0.1 --num_attackers 5 --attacker_ep 5 --num_users 100 --attack_label 3 --agg krum --noise 0 --dataset cifar-100
 
 ```
-
-
